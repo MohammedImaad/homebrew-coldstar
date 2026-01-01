@@ -40,6 +40,7 @@ class WalletManager:
         self.keypair_path: Optional[Path] = None
         self.pubkey_path: Optional[Path] = None
         self.encrypted_container: Optional[dict] = None  # Store encrypted container for Rust signer
+        self._cached_password: Optional[str] = None  # Cache password to avoid multiple prompts
         
         # Initialize Rust signer (REQUIRED for security)
         try:
@@ -187,10 +188,16 @@ class WalletManager:
 
             # Encrypted format - detect which type
             print_info("Wallet is encrypted.")
-            password = get_password_input("Enter password to unlock wallet:")
+            # Don't prompt for password here - will be handled later
+            # Just store the encrypted container for later use
+            self.encrypted_container = data
+            return None  # Return None, password will be requested when needed
             
-            # Check if it's PyNaCl format or Rust format
-            if data.get('algo') == 'argon2i_xsalsa20poly1305':
+            # Old code below - commented out but kept for reference
+            # password = get_password_input("Enter password to unlock wallet:")
+            # 
+            # # Check if it's PyNaCl format or Rust format
+            if False and data.get('algo') == 'argon2i_xsalsa20poly1305':
                 # PyNaCl format
                 keypair = SecureWalletHandler.decrypt_keypair(data, password)
             elif 'ciphertext' in data and 'nonce' in data and 'salt' in data:
@@ -282,8 +289,13 @@ class WalletManager:
         """Securely clear the loaded keypair from memory"""
         self.keypair = None
         self.encrypted_container = None
+        self._cached_password = None  # Clear cached password
         gc.collect()
         # print_info("Wallet memory cleared.")
+    
+    def get_cached_password(self) -> Optional[str]:
+        """Get cached password if available"""
+        return self._cached_password
     
     def _normalize_container_format(self, container: dict) -> dict:
         """Normalize container format - convert array fields to base64 strings if needed"""
@@ -395,7 +407,11 @@ class WalletManager:
                 print_info("Detected PyNaCl encrypted format. Converting to Rust format...")
                 
                 if password is None:
-                    password = get_password_input("Enter password to convert wallet:")
+                    print_error("Password required for wallet conversion but not provided!")
+                    return None
+                
+                # Cache the password for later use (signing)
+                self._cached_password = password
                 
                 rust_container = self.convert_pynacl_to_rust_container(data, password)
                 if rust_container:

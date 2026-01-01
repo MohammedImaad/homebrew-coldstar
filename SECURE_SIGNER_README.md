@@ -352,13 +352,13 @@ MIT License - See LICENSE file for details
 5. ✅ Review the threat model (SECURITY.md)
 6. ✅ Ensure compliance with your security requirements
 
+**Use at your own risk. No warranty provided.**
+
 ## 🙏 Acknowledgments
 
 Built with:
 - [ed25519-dalek](https://github.com/dalek-cryptography/ed25519-dalek) - Ed25519 signatures
-- [aes-gcm](https://github.com/RustCrypto/AEADs) - Authenticated encryption
-- [argon2](https://github.com/RustCrypto/password-hashes) - Password hashing
-- [zeroize](https://github.com/RustCrypto/utils/tree/master/zeroize) - Secure memory clearing
+- [aes-gcm](https://github.com/RustCrypto/AEADs) - Authentie memory clearing
 - [region](https://github.com/darfink/region-rs) - Memory locking
 
 ## 📞 Support

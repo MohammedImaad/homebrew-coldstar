@@ -219,6 +219,7 @@ class SolanaColdWalletCLI:
         print_info("  2. Customize it with Solana signing tools")
         print_info("  3. Create bootable cold wallet structure")
         print_info("  4. Flash to USB (erases all existing data)")
+        print_info("  5. Generate keypair and wallet on the USB")
         console.print()
         
         print_info("Detected USB devices:")
@@ -268,7 +269,7 @@ class SolanaColdWalletCLI:
             import time
             
             # Show progress through the build process
-            print_step(1, 6, "Initializing ISO builder...")
+            print_step(1, 7, "Initializing ISO builder...")
             time.sleep(0.5)
             
             # The ISOBuilder will handle the actual animated steps
@@ -289,13 +290,27 @@ class SolanaColdWalletCLI:
             if self.iso_builder.flash_to_usb(device['device'], str(result_path)):
                 console.print()
                 print_success("✓ Cold wallet USB created successfully!")
-                console.print()
                 
+                # Display the generated public key if available
+                if self.iso_builder.generated_pubkey:
+                    console.print()
+                    from rich.panel import Panel
+                    wallet_info = f"""[bold green]Wallet Generated Successfully![/bold green]
+
+[yellow]Public Key (Wallet Address):[/yellow]
+[bold white]{self.iso_builder.generated_pubkey}[/bold white]
+
+[bold cyan]This wallet is now ready to receive and send SOL![/bold cyan]
+
+Write down or photograph this address to receive payments."""
+                    console.print(Panel(wallet_info, title="✓ Wallet Ready", border_style="green"))
+                
+                console.print()
                 print_info("Next steps:")
                 print_info("  1. Safely remove the USB drive")
-                print_info("  2. Boot an air-gapped computer from this USB")
-                print_info("  3. Wallet will be generated on first boot")
-                print_info("  4. Keep the USB offline and secure")
+                print_info("  2. The wallet is ready - you can send SOL to the address above")
+                print_info("  3. For air-gapped signing, boot from this USB on an offline computer")
+                print_info("  4. Keep the USB offline and secure when not in use")
                 console.print()
                 
                 from rich.panel import Panel
@@ -429,10 +444,10 @@ class SolanaColdWalletCLI:
             print_error("Keypair not found on USB")
             return
         
-        # This will prompt for password
-        keypair = self.wallet_manager.load_keypair(str(keypair_path))
-        if not keypair:
-            return
+        # Load wallet (without password prompt)
+        self.wallet_manager.load_keypair(str(keypair_path))
+        # Note: load_keypair now returns None for encrypted wallets, which is fine
+        # We'll get the password later after SEND confirmation
             
         try:
             from_address = self.current_public_key
@@ -463,7 +478,11 @@ class SolanaColdWalletCLI:
             print_transaction_summary(from_address, to_address, amount)
             console.print()
             
-            if not confirm_dangerous_action("Send this transaction NOW?", "SEND"):
+            # Password IS the confirmation
+            from src.ui import get_password_input
+            password = get_password_input("Type your password to confirm transaction:")
+            
+            if not password:
                 print_info("Transaction cancelled")
                 return
             
@@ -487,14 +506,10 @@ class SolanaColdWalletCLI:
             print_info("Signing transaction securely...")
             
             # Load encrypted container from wallet
-            encrypted_container = self.wallet_manager.load_encrypted_container(str(keypair_path))
+            encrypted_container = self.wallet_manager.load_encrypted_container(str(keypair_path), password)
             if not encrypted_container:
                 print_error("Failed to load encrypted wallet container")
                 return
-                
-            # Get password (already prompted during load_keypair, but we need it for secure signing)
-            from src.ui import get_password_input
-            password = get_password_input("Enter wallet password for secure signing:")
             
             signed_tx = self.transaction_manager.sign_transaction_secure(tx_bytes, encrypted_container, password)
             
@@ -583,9 +598,11 @@ class SolanaColdWalletCLI:
             
         tx_path = inbox_dir / selection
         
-        # Get password for secure signing
-        from src.ui import get_password_input
-        password = get_password_input("Enter wallet password for secure signing:")
+        # Get password for secure signing - use cached password if available
+        password = self.wallet_manager.get_cached_password()
+        if password is None:
+            from src.ui import get_password_input
+            password = get_password_input("Enter wallet password for secure signing:")
             
         try:
             # Load and sign the transaction
@@ -742,9 +759,11 @@ class SolanaColdWalletCLI:
             print_error("Failed to load encrypted wallet container")
             return
         
-        # Get password
-        from src.ui import get_password_input
-        password = get_password_input("Enter wallet password for secure signing:")
+        # Get password - use cached password if available
+        password = self.wallet_manager.get_cached_password()
+        if password is None:
+            from src.ui import get_password_input
+            password = get_password_input("Enter wallet password for secure signing:")
         
         # Let user select which transaction to sign
         file_options = [f.name for f in unsigned_files]

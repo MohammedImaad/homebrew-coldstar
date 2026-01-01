@@ -5,6 +5,7 @@ B - Love U 3000
 """
 
 import subprocess
+import sys
 import os
 import shutil
 import tempfile
@@ -63,7 +64,7 @@ class ISOBuilder:
         
         # On Windows, skip the Alpine download and use simplified approach
         if self.is_windows:
-            print_step(1, 6, "Preparing wallet structure for Windows...")
+            print_step(1, 7, "Preparing wallet structure for Windows...")
             print_info("Using simplified wallet structure for Windows")
             # Create a dummy tarball path to satisfy the workflow
             tarball_path = self.work_dir / "wallet_structure.marker"
@@ -72,7 +73,7 @@ class ISOBuilder:
         
         tarball_path = self.work_dir / "alpine-minirootfs.tar.gz"
         
-        print_step(1, 6, "Downloading Alpine Linux minirootfs...")
+        print_step(1, 7, "Downloading Alpine Linux minirootfs...")
         
         try:
             result = subprocess.run(
@@ -106,7 +107,7 @@ class ISOBuilder:
             return None
     
     def extract_rootfs(self, tarball_path: Path) -> Optional[Path]:
-        print_step(2, 6, "Extracting filesystem...")
+        print_step(2, 7, "Extracting filesystem...")
         
         self.rootfs_dir = self.work_dir / "rootfs"
         self.rootfs_dir.mkdir(parents=True, exist_ok=True)
@@ -140,7 +141,7 @@ class ISOBuilder:
             print_error("No rootfs directory set")
             return False
         
-        print_step(3, 6, "Configuring offline OS...")
+        print_step(3, 7, "Configuring offline OS...")
         
         try:
             wallet_dir = self.rootfs_dir / "wallet"
@@ -188,7 +189,7 @@ class ISOBuilder:
     
     def _install_python_deps(self) -> bool:
         """Create a setup script for installing Python deps on first boot"""
-        print_step(4, 6, "Configuring Python environment...")
+        print_step(4, 7, "Configuring Python environment...")
         
         setup_script = self.rootfs_dir / "etc" / "local.d" / "setup-python.start"
         setup_script.parent.mkdir(parents=True, exist_ok=True)
@@ -666,7 +667,7 @@ fi
     
     def _create_bootable_image(self, output_dir: Path) -> Optional[Path]:
         """Create a bootable disk image"""
-        print_step(5, 6, "Creating bootable image...")
+        print_step(5, 7, "Creating bootable image...")
         
         image_path = output_dir / "solana-cold-wallet.img"
         
@@ -727,7 +728,7 @@ fi
     
     def _create_archive_image(self, output_dir: Path) -> Optional[Path]:
         """Fallback: create a tar.gz archive of the filesystem"""
-        print_step(5, 6, "Creating portable filesystem archive...")
+        print_step(5, 7, "Creating portable filesystem archive...")
         
         archive_path = output_dir / "solana-cold-wallet.tar.gz"
         
@@ -767,9 +768,109 @@ fi
         else:
             return self._flash_to_usb_linux(device_path, image_path)
     
+    def _generate_wallet_on_usb(self, mount_point: str) -> bool:
+        """Generate keypair and wallet on the USB drive (Step 7)"""
+        print_step(7, 7, "Generating keypair and wallet on USB...")
+        
+        try:
+            from solders.keypair import Keypair
+            from src.secure_memory import SecureWalletHandler
+            from src.ui import get_password_input
+            
+            wallet_dir = Path(mount_point) / "wallet"
+            wallet_dir.mkdir(parents=True, exist_ok=True)
+            
+            keypair_path = wallet_dir / "keypair.json"
+            pubkey_path = wallet_dir / "pubkey.txt"
+            
+            # Check if wallet already exists
+            if keypair_path.exists() and pubkey_path.exists():
+                print_info("Wallet already exists on this USB drive")
+                with open(pubkey_path, 'r') as f:
+                    existing_pubkey = f.read().strip()
+                print_info(f"Existing Public Key: {existing_pubkey}")
+                
+                overwrite = confirm_dangerous_action(
+                    "Overwrite existing wallet?",
+                    "OVERWRITE"
+                )
+                if not overwrite:
+                    print_info("Using existing wallet")
+                    self.generated_pubkey = existing_pubkey
+                    return True
+            
+            print_info("Generating new Solana keypair...")
+            keypair = Keypair()
+            public_key = str(keypair.pubkey())
+            
+            print_success(f"Generated keypair: {public_key[:8]}...{public_key[-8:]}")
+            
+            # Get password for encryption
+            print_info("")
+            print_info("Your wallet will be encrypted with a password.")
+            print_warning("IMPORTANT: Remember this password - you cannot recover funds without it!")
+            password = get_password_input("Set wallet password:")
+            confirm_password = get_password_input("Confirm password:")
+            
+            if password != confirm_password:
+                print_error("Passwords do not match!")
+                return False
+            
+            if not password:
+                print_error("Password cannot be empty!")
+                return False
+            
+            print_info("Encrypting wallet...")
+            encrypted_data = SecureWalletHandler.encrypt_keypair(keypair, password)
+            
+            # Save encrypted keypair
+            with open(keypair_path, 'w') as f:
+                json.dump(encrypted_data, f, indent=2)
+            
+            # Save public key
+            with open(pubkey_path, 'w') as f:
+                f.write(public_key)
+            
+            # Set secure permissions if on Unix
+            if not self.is_windows:
+                os.chmod(keypair_path, 0o600)
+                os.chmod(pubkey_path, 0o644)
+            
+            # Clear keypair from memory
+            del keypair
+            import gc
+            gc.collect()
+            
+            print_success("✓ Wallet created and encrypted successfully!")
+            print_info("")
+            print_info("=" * 60)
+            print_success("YOUR WALLET PUBLIC KEY (ADDRESS):")
+            print_info(public_key)
+            print_info("=" * 60)
+            print_info("")
+            print_warning("Write down or photograph this address!")
+            print_warning("You need this to receive SOL on this wallet.")
+            print_info("")
+            
+            # Store the generated pubkey for later reference
+            self.generated_pubkey = public_key
+            
+            return True
+            
+        except ImportError as e:
+            print_error(f"Required modules not available: {e}")
+            print_info("Make sure solders and secure_memory are installed")
+            return False
+        except Exception as e:
+            print_error(f"Wallet generation failed: {e}")
+            import traceback
+            if "--debug" in sys.argv:
+                traceback.print_exc()
+            return False
+    
     def _flash_to_usb_windows(self, device_path: str, image_path: str = None) -> bool:
         """Flash on Windows by copying wallet structure to drive"""
-        print_step(6, 6, "Setting up wallet on USB drive...")
+        print_step(6, 7, "Setting up wallet on USB drive...")
         
         # For Windows, we need to get the mount point (drive letter)
         # The device_path might be like \\\\.\\PHYSICALDRIVE1, but we need D:\\ or similar
@@ -828,7 +929,7 @@ outbox/  - Signed transactions will be placed here
 
 Usage:
 ------
-1. Generate a wallet using the main program
+1. Your wallet has been pre-generated and is ready to use
 2. Copy unsigned transactions to inbox/
 3. Use offline signing tools to sign transactions
 4. Retrieve signed transactions from outbox/
@@ -842,6 +943,13 @@ For more information, see the project documentation.
                 
                 print_success(f"Wallet structure created on {mount_point}")
                 print_info("Directories created: wallet/, inbox/, outbox/")
+                
+                # Step 7: Generate keypair and wallet on the USB drive
+                if not self._generate_wallet_on_usb(mount_point):
+                    print_warning("Wallet structure created, but keypair generation failed")
+                    print_info("You can generate the wallet manually later")
+                    return True  # Still return True since structure is created
+                
                 return True
             else:
                 print_error("Could not determine drive letter")
@@ -860,7 +968,7 @@ For more information, see the project documentation.
             print_error("No image file to flash")
             return False
         
-        print_step(6, 6, f"Flashing to {device_path}...")
+        print_step(6, 7, f"Flashing to {device_path}...")
         print_warning(f"This will ERASE ALL DATA on {device_path}")
         
         if not confirm_dangerous_action(
@@ -871,6 +979,8 @@ For more information, see the project documentation.
             return False
         
         try:
+            mount_point = None
+            
             if str(image).endswith('.img') or str(image).endswith('.iso'):
                 result = subprocess.run(
                     ['dd', f'if={image}', f'of={device_path}', 'bs=4M', 'status=progress', 'oflag=sync'],
@@ -891,13 +1001,20 @@ For more information, see the project documentation.
                     capture_output=True,
                     timeout=300
                 )
-                
-                subprocess.run(['umount', mount_point], capture_output=True, timeout=30)
             
             if result.returncode == 0:
+                # Step 7: Generate wallet on USB if we have a mount point
+                if mount_point:
+                    if not self._generate_wallet_on_usb(mount_point):
+                        print_warning("Wallet structure created, but keypair generation failed")
+                        print_info("You can generate the wallet manually later")
+                    subprocess.run(['umount', mount_point], capture_output=True, timeout=30)
+                
                 print_success("USB flash completed successfully!")
                 return True
             else:
+                if mount_point:
+                    subprocess.run(['umount', mount_point], capture_output=True, timeout=30)
                 print_error("Flash operation failed")
                 return False
                 
@@ -912,7 +1029,7 @@ For more information, see the project documentation.
             return False
     
     def cleanup(self):
-        print_step(6, 6, "Cleaning up temporary files...")
+        print_step(7, 7, "Cleaning up temporary files...")
         
         if self.work_dir and self.work_dir.exists():
             try:
