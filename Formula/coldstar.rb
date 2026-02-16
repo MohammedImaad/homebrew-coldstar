@@ -12,7 +12,7 @@ class Coldstar < Formula
 
     (bin/"coldstar").write <<~EOS
       #!/bin/bash
-      exec #{Formula["python@3.11"].opt_bin}/python3 #{libexec}/main.py "$@"
+      exec /opt/homebrew/bin/python3.11 #{libexec}/main.py "$@"
     EOS
   end
 
