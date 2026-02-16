@@ -9,7 +9,11 @@ class Coldstar < Formula
 
   def install
     libexec.install Dir["*"]
-    bin.write_exec_script libexec/"main.py"
+
+    (bin/"coldstar").write <<~EOS
+      #!/bin/bash
+      exec #{Formula["python@3.11"].opt_bin}/python3 #{libexec}/main.py "$@"
+    EOS
   end
 
   test do
