@@ -1,4 +1,6 @@
 class Coldstar < Formula
+  include Language::Python::Virtualenv
+
   desc "Coldstar CLI"
   homepage "https://github.com/MohammedImaad/coldstar"
   url "https://github.com/MohammedImaad/coldstar/archive/refs/tags/v0.1.0.tar.gz"
@@ -8,12 +10,7 @@ class Coldstar < Formula
   depends_on "python@3.11"
 
   def install
-    libexec.install Dir["*"]
-
-    (bin/"coldstar").write <<~EOS
-      #!/bin/bash
-      exec /opt/homebrew/bin/python3.11 #{libexec}/main.py "$@"
-    EOS
+    virtualenv_install_with_resources
   end
 
   test do
